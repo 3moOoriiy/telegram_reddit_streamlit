@@ -1,19 +1,20 @@
-# تجهيز نسخة محدثة من المشروع مع إصلاح reddit API بكود جديد
+# إنشاء مشروع مدمج يحتوي على كود Reddit (scraping من HTML) وTelegram (باستخدام Bot API)
 import os
 import zipfile
 
-project_path = "/mnt/data/reddit_telegram_scraper_fixed"
+project_path = "/mnt/data/reddit_telegram_scraper_final"
 os.makedirs(project_path, exist_ok=True)
 
-# app.py بالكود الكامل
-code = '''import streamlit as st
+# app.py بالكود الموحد
+app_code = '''import streamlit as st
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 
-# Telegram Bot Token (عشان تجرب لازم تحط توكن شغال)
+# Telegram Bot Token
 BOT_TOKEN = "7850779767:AAEt52D2I1OE38X-rNDRqC2ifah3OXefFDo"
 
-# Telegram Scraper
+# Telegram Scraper using Bot API
 def get_telegram_info(link):
     if "t.me/" in link:
         username = link.split("t.me/")[-1].strip().replace("/", "")
@@ -40,51 +41,50 @@ def get_telegram_info(link):
         "Link": link
     }
 
-# ✅ Reddit Scraper باستخدام Reddit API الرسمي
+# Reddit Scraper using HTML parsing
 def get_reddit_info(link):
-    if "reddit.com/user/" in link:
-        username = link.split("reddit.com/user/")[-1].strip("/").split("/")[0]
-    else:
-        username = link.strip()
-    
     headers = {"User-Agent": "Mozilla/5.0"}
-    profile_url = f"https://www.reddit.com/user/{username}/about.json"
-
     try:
-        response = requests.get(profile_url, headers=headers, timeout=10)
+        response = requests.get(link, headers=headers, timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            user_info = data["data"]
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            name_tag = soup.find("h1")
+            bio_tag = soup.find("p", attrs={"data-testid": "profile-description"})
+
+            account_name = name_tag.text.strip() if name_tag else "N/A"
+            account_bio = bio_tag.text.strip() if bio_tag else "N/A"
+
             return {
                 "Platform": "Reddit",
-                "Account Name": user_info.get("subreddit", {}).get("title", username),
-                "Account Bio": user_info.get("subreddit", {}).get("public_description", "N/A"),
+                "Account Name": account_name,
+                "Account Bio": account_bio,
                 "Status": "Active",
-                "Link": f"https://www.reddit.com/user/{username}/"
+                "Link": link
             }
         elif response.status_code == 404:
             return {
                 "Platform": "Reddit",
-                "Account Name": username,
+                "Account Name": "N/A",
                 "Account Bio": "N/A",
-                "Status": "Suspended or Not Found",
-                "Link": f"https://www.reddit.com/user/{username}/"
+                "Status": "Not Found",
+                "Link": link
             }
-    except Exception as e:
+    except Exception:
         return {
             "Platform": "Reddit",
-            "Account Name": username,
+            "Account Name": "N/A",
             "Account Bio": "N/A",
             "Status": "Error",
-            "Link": f"https://www.reddit.com/user/{username}/"
+            "Link": link
         }
 
 # Streamlit UI
-st.set_page_config(page_title="Account Scraper", layout="centered")
-st.title("🔍 Social Account Scraper (Telegram + Reddit)")
+st.set_page_config(page_title="Social Account Scraper", layout="centered")
+st.title("🔍 Social Account Scraper")
 
 platform = st.selectbox("اختر المنصة:", ["Telegram", "Reddit"])
-user_input = st.text_area("أدخل الروابط (رابط في كل سطر):")
+user_input = st.text_area("أدخل روابط الحسابات (كل رابط في سطر):")
 
 if "results" not in st.session_state:
     st.session_state.results = []
@@ -115,14 +115,22 @@ if st.session_state.results:
     st.download_button("📥 تحميل النتائج CSV", csv, "accounts.csv", "text/csv")
 '''
 
+# requirements.txt
+requirements = '''streamlit
+requests
+pandas
+beautifulsoup4
+'''
+
+# حفظ الملفات
 with open(f"{project_path}/app.py", "w", encoding="utf-8") as f:
-    f.write(code)
+    f.write(app_code)
 
 with open(f"{project_path}/requirements.txt", "w", encoding="utf-8") as f:
-    f.write("streamlit\nrequests\npandas")
+    f.write(requirements)
 
-# ضغط المشروع
-zip_path = "/mnt/data/reddit_telegram_scraper_fixed.zip"
+# ضغط الملفات إلى ZIP
+zip_path = "/mnt/data/reddit_telegram_scraper_final.zip"
 with zipfile.ZipFile(zip_path, "w") as zipf:
     zipf.write(f"{project_path}/app.py", arcname="app.py")
     zipf.write(f"{project_path}/requirements.txt", arcname="requirements.txt")
