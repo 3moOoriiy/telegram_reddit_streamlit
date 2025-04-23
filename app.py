@@ -1,138 +1,141 @@
-# إنشاء مشروع مدمج يحتوي على كود Reddit (scraping من HTML) وTelegram (باستخدام Bot API)
+from zipfile import ZipFile
 import os
-import zipfile
 
-project_path = "/mnt/data/reddit_telegram_scraper_final"
-os.makedirs(project_path, exist_ok=True)
+# إنشاء مجلد مؤقت لتجميع الملفات
+project_dir = "/mnt/data/reddit_telegram_scraper_final_v2"
+os.makedirs(project_dir, exist_ok=True)
 
-# app.py بالكود الموحد
-app_code = '''import streamlit as st
-import requests
+# ملف app.py
+app_code = '''
+import streamlit as st
+from selenium import webdriver
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 import pandas as pd
-from bs4 import BeautifulSoup
+import time
 
-# Telegram Bot Token
-BOT_TOKEN = "7850779767:AAEt52D2I1OE38X-rNDRqC2ifah3OXefFDo"
+def setup_driver():
+    options = EdgeOptions()
+    options.use_chromium = True
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    driver = webdriver.Edge(service=Service(EdgeChromiumDriverManager().install()), options=options)
+    return driver
 
-# Telegram Scraper using Bot API
-def get_telegram_info(link):
-    if "t.me/" in link:
-        username = link.split("t.me/")[-1].strip().replace("/", "")
-    else:
-        username = link.strip()
-    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id=@{username}"
-    response = requests.get(api_url)
-    if response.status_code == 200:
-        data = response.json()
-        if data["ok"]:
-            chat = data["result"]
-            return {
-                "Platform": "Telegram",
-                "Account Name": chat.get("title", "N/A"),
-                "Account Bio": chat.get("description", "N/A"),
-                "Status": "Active",
-                "Link": link
-            }
+def scrape_reddit(url, driver):
+    platform = "Reddit"
+    account_name = "N/A"
+    account_bio = "N/A"
+    status = "Failed or Not Found"
+
+    try:
+        driver.get(url)
+        wait = WebDriverWait(driver, 15)
+
+        try:
+            name_element = wait.until(EC.presence_of_element_located((By.XPATH, "//h1")))
+            account_name = name_element.text.strip()
+        except:
+            pass
+
+        try:
+            bio_element = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'ProfileSidebar__description')]")))
+            account_bio = bio_element.text.strip()
+        except:
+            pass
+
+        if account_name != "N/A":
+            status = "Active"
+
+    except Exception as e:
+        print("❌ Reddit Error:", e)
+
     return {
-        "Platform": "Telegram",
-        "Account Name": "N/A",
-        "Account Bio": "N/A",
-        "Status": "Failed or Not Found",
-        "Link": link
+        "Platform": platform,
+        "Account Name": account_name,
+        "Account Bio": account_bio,
+        "Status": status,
+        "Link": url
     }
 
-# Reddit Scraper using HTML parsing
-def get_reddit_info(link):
-    headers = {"User-Agent": "Mozilla/5.0"}
+def scrape_telegram(url, driver):
+    platform = "Telegram"
+    account_name = "N/A"
+    account_bio = "N/A"
+    status = "Active"
+
     try:
-        response = requests.get(link, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
+        driver.get(url)
+        wait = WebDriverWait(driver, 15)
 
-            name_tag = soup.find("h1")
-            bio_tag = soup.find("p", attrs={"data-testid": "profile-description"})
+        try:
+            name_element = wait.until(EC.presence_of_element_located((By.XPATH, "//span[@dir='auto']")))
+            account_name = name_element.text.strip()
+        except:
+            account_name = "N/A"
 
-            account_name = name_tag.text.strip() if name_tag else "N/A"
-            account_bio = bio_tag.text.strip() if bio_tag else "N/A"
+        try:
+            bio_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "tgme_page_description")))
+            account_bio = bio_element.text.strip()
+        except:
+            account_bio = "N/A"
 
-            return {
-                "Platform": "Reddit",
-                "Account Name": account_name,
-                "Account Bio": account_bio,
-                "Status": "Active",
-                "Link": link
-            }
-        elif response.status_code == 404:
-            return {
-                "Platform": "Reddit",
-                "Account Name": "N/A",
-                "Account Bio": "N/A",
-                "Status": "Not Found",
-                "Link": link
-            }
-    except Exception:
-        return {
-            "Platform": "Reddit",
-            "Account Name": "N/A",
-            "Account Bio": "N/A",
-            "Status": "Error",
-            "Link": link
-        }
+        if "unavailable" in driver.page_source:
+            status = "Suspended"
+
+    except Exception as e:
+        print("❌ Telegram Error:", e)
+        status = "Failed"
+
+    return {
+        "Platform": platform,
+        "Account Name": account_name,
+        "Account Bio": account_bio,
+        "Status": status,
+        "Link": url
+    }
 
 # Streamlit UI
-st.set_page_config(page_title="Social Account Scraper", layout="centered")
 st.title("🔍 Social Account Scraper")
 
-platform = st.selectbox("اختر المنصة:", ["Telegram", "Reddit"])
-user_input = st.text_area("أدخل روابط الحسابات (كل رابط في سطر):")
-
-if "results" not in st.session_state:
-    st.session_state.results = []
+platform = st.selectbox("اختر المنصة:", ["Reddit", "Telegram"])
+urls_input = st.text_area("أدخل روابط الحسابات (كل رابط في سطر):")
 
 if st.button("ابدأ"):
-    links = [link.strip() for link in user_input.split("\\n") if link.strip()]
-    for link in links:
-        if platform == "Telegram":
-            result = get_telegram_info(link)
-        elif platform == "Reddit":
-            result = get_reddit_info(link)
-        else:
-            result = {
-                "Platform": platform,
-                "Account Name": "N/A",
-                "Account Bio": "N/A",
-                "Status": "Unsupported",
-                "Link": link
-            }
-        st.session_state.results.append(result)
+    urls = [u.strip() for u in urls_input.split("\\n") if u.strip()]
+    results = []
 
-if st.session_state.results:
-    st.markdown("---")
-    st.subheader("📊 النتائج:")
-    df = pd.DataFrame(st.session_state.results)
+    driver = setup_driver()
+    for url in urls:
+        if "reddit.com" in url:
+            results.append(scrape_reddit(url, driver))
+        elif "t.me" in url:
+            results.append(scrape_telegram(url, driver))
+    driver.quit()
+
+    df = pd.DataFrame(results)
+    st.markdown("### 📊 النتائج:")
     st.dataframe(df)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("📥 تحميل النتائج CSV", csv, "accounts.csv", "text/csv")
+    st.download_button("📥 تحميل النتائج CSV", df.to_csv(index=False).encode("utf-8"), "results.csv", "text/csv")
 '''
 
-# requirements.txt
-requirements = '''streamlit
-requests
-pandas
-beautifulsoup4
-'''
-
-# حفظ الملفات
-with open(f"{project_path}/app.py", "w", encoding="utf-8") as f:
+with open(f"{project_dir}/app.py", "w", encoding="utf-8") as f:
     f.write(app_code)
 
-with open(f"{project_path}/requirements.txt", "w", encoding="utf-8") as f:
-    f.write(requirements)
+# عمل ملف requirements.txt
+with open(f"{project_dir}/requirements.txt", "w") as f:
+    f.write("streamlit\nselenium\nwebdriver-manager\npandas")
 
-# ضغط الملفات إلى ZIP
-zip_path = "/mnt/data/reddit_telegram_scraper_final.zip"
-with zipfile.ZipFile(zip_path, "w") as zipf:
-    zipf.write(f"{project_path}/app.py", arcname="app.py")
-    zipf.write(f"{project_path}/requirements.txt", arcname="requirements.txt")
+# ضغط المجلد
+zip_path = "/mnt/data/reddit_telegram_scraper_final_v2.zip"
+with ZipFile(zip_path, 'w') as zipf:
+    for root, dirs, files in os.walk(project_dir):
+        for file in files:
+            filepath = os.path.join(root, file)
+            zipf.write(filepath, arcname=os.path.relpath(filepath, project_dir))
 
 zip_path
